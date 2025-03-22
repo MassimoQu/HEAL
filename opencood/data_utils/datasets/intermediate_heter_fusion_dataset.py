@@ -19,6 +19,10 @@ import copy
 from icecream import ic
 from PIL import Image
 import pickle as pkl
+
+from opencood.extrinsic_utils.freeAlign_match_v7_debug import get_right_box
+from opencood.extrinsic_utils.v2icalib_init_extrinsic_solve import cal_init_pose
+
 from opencood.utils import box_utils as box_utils
 from opencood.data_utils.pre_processor import build_preprocessor
 from opencood.data_utils.post_processor import build_postprocessor
@@ -29,7 +33,7 @@ from opencood.utils.camera_utils import (
     img_to_tensor,
 )
 from opencood.utils.common_utils import merge_features_to_dict, compute_iou, convert_format
-from opencood.utils.transformation_utils import x1_to_x2, x_to_world, get_pairwise_transformation
+from opencood.utils.transformation_utils import x1_to_x2, x_to_world, get_pairwise_transformation, pose_to_tfm
 from opencood.utils.pose_utils import add_noise_data_dict
 from opencood.data_utils.pre_processor import build_preprocessor
 from opencood.utils.pcd_utils import (
@@ -40,6 +44,8 @@ from opencood.utils.pcd_utils import (
 )
 from opencood.utils.common_utils import read_json
 from opencood.utils.heter_utils import Adaptor
+from opencood.utils.box_utils import boxes_to_corners_3d
+
 
 
 def getIntermediateheterFusionDataset(cls):
@@ -95,13 +101,31 @@ def getIntermediateheterFusionDataset(cls):
 
             self.kd_flag = params.get('kd_flag', False)
 
+            # self.box_align = False
+            # if "box_align" in params:
+            #     self.box_align = True
+            #     self.stage1_result_path = params['box_align']['train_result'] if train else params['box_align']['val_result']
+            #     self.stage1_result = read_json(self.stage1_result_path)
+            #     self.box_align_args = params['box_align']['args']
+                
+
             self.box_align = False
             if "box_align" in params:
                 self.box_align = True
                 self.stage1_result_path = params['box_align']['train_result'] if train else params['box_align']['val_result']
                 self.stage1_result = read_json(self.stage1_result_path)
                 self.box_align_args = params['box_align']['args']
-                
+                self.no_pose = params['box_align']['no_pose']
+                self.min_anchor = params['box_align']['min_anchor']
+                self.anchor_error = params['box_align']['anchor_error']
+                self.box_error = params['box_align']['box_error']
+                self.use_gnn = params['box_align']['gnn']
+                self.gt_correct = params['box_align']['gt_correct']
+                self.solve_init_pose = params['box_align']['solve_init_pose']['use_v2i_calib']
+                if self.use_gnn:
+                    self.gnn_error = params['box_align']['gnn_error']
+                    self.gnn_extractor = torch.load(params['box_align']['gnn_model_path'])
+            
 
 
         def get_item_single_car(self, selected_cav_base, ego_cav_base):
@@ -377,15 +401,38 @@ def getIntermediateheterFusionDataset(cls):
                     all_agent_corners_list = stage1_content['pred_corner3d_np_list']
                     all_agent_uncertainty_list = stage1_content['uncertainty_np_list']
 
-                    cur_agent_id_list = cav_id_list
-                    cur_agent_pose = [base_data_dict[cav_id]['params']['lidar_pose'] for cav_id in cav_id_list]
-                    cur_agnet_pose = np.array(cur_agent_pose)
+                    cur_agent_id_list = cav_id_list                   
                     cur_agent_in_all_agent = [all_agent_id_list.index(cur_agent) for cur_agent in cur_agent_id_list] # indexing current agent in `all_agent_id_list`
 
                     pred_corners_list = [np.array(all_agent_corners_list[cur_in_all_ind], dtype=np.float64) 
                                             for cur_in_all_ind in cur_agent_in_all_agent]
                     uncertainty_list = [np.array(all_agent_uncertainty_list[cur_in_all_ind], dtype=np.float64) 
                                             for cur_in_all_ind in cur_agent_in_all_agent]
+
+                    agent_pose_clean = [base_data_dict[cav_id]['params']['lidar_pose_clean'] for cav_id in cav_id_list]
+                    cur_agent_pose = [base_data_dict[cav_id]['params']['lidar_pose'] for cav_id in cav_id_list]
+                    # cur_agnet_pose = np.array(cur_agent_pose) ##
+                    
+                    gt_pose = pose_to_tfm(cur_agent_pose)
+                    # if self.no_pose:
+                    #     cur_agent_pose = np.zeros((len(cur_agent_id_list), 6))
+                    #     # cur_agent_pose[:,[0,1]] = 0.0
+                    #     cur_agent_pose[:,4] = 1.0
+                    # else:
+                    #     cur_agent_pose = np.array(copy.deepcopy([base_data_dict[cav_id]['params']['lidar_pose'] for cav_id in cav_id_list]))
+
+                    
+                    if self.gt_correct:
+                        selected_cav_base = base_data_dict[cav_id_list[0]]
+                        selected_cav_processed = self.get_item_single_car(
+                            selected_cav_base,
+                            ego_cav_base)
+                        
+                        ego_corner_box_gt = boxes_to_corners_3d(selected_cav_processed['object_bbx_center'], 'hwl')
+                        for i in range(1, len(cur_agent_pose)):
+                            pred_corners_list[i] = np.array(get_right_box(torch.tensor(pred_corners_list[i], dtype=torch.float32), torch.tensor(ego_corner_box_gt, dtype=torch.float32), torch.tensor(np.expand_dims(get_pairwise_transformation(base_data_dict,self.max_cav,self.proj_first),0), dtype=torch.float32)))
+                        
+                    cur_agnet_pose = cal_init_pose(pred_corners_list, agent_pose_clean, 'v2icalib_trueT')
 
                     if sum([len(pred_corners) for pred_corners in pred_corners_list]) != 0:
                         refined_pose = box_alignment_relative_sample_np(pred_corners_list,
@@ -397,6 +444,15 @@ def getIntermediateheterFusionDataset(cls):
                         for i, cav_id in enumerate(cav_id_list):
                             lidar_pose_list[i] = cur_agnet_pose[i].tolist()
                             base_data_dict[cav_id]['params']['lidar_pose'] = cur_agnet_pose[i].tolist()
+
+                # indices_to_delete = []  
+                # for i, cav_id in enumerate(cav_id_list):
+                #     if not cur_agent_pose[i].any():
+                #         base_data_dict.pop(cav_id)
+                #         indices_to_delete.append(i)
+            
+                # new_list = [element for index, element in enumerate(cav_id_list) if index not in indices_to_delete]
+                # cav_id_list = new_list
 
 
 

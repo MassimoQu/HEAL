@@ -19,6 +19,28 @@ input_source: ['lidar']
 label_type: 'lidar'
 cav_lidar_range: &cav_lidar [-102.4, -51.2, -3.5, 102.4, 51.2, 1.5]
 
+box_align:
+  train_result: "opencood/logs/coalign_precalc/dairv2x/train/stage1_boxes.json"
+  val_result: "opencood/logs/coalign_precalc/dairv2x/val/stage1_boxes.json"
+  test_result: "opencood/logs/coalign_precalc/dairv2x/test/stage1_boxes.json"
+  solve_init_pose:
+    use_v2i_calib: true
+    v2i_calib_args:
+      /  
+  gt_correct: true
+  gnn: false
+  no_pose: true
+  min_anchor: 4
+  anchor_error: 0.3
+  box_error: 0.5
+  args:
+    use_uncertainty: true
+    landmark_SE2: true
+    adaptive_landmark: false
+    normalize_uncertainty: false
+    abandon_hard_cases: true
+    drop_hard_boxes: true
+
 heter:
   assignment_path: null
   ego_modality: &ego_modality "m1"
@@ -128,7 +150,6 @@ model:
         core_method: identity
 
     fusion_method: att
-    att:
       feat_dim: [64, 128, 256]
 
     fusion_backbone:
