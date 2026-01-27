@@ -141,8 +141,11 @@ class V2XTEncoder(nn.Module):
         self.use_RTE = cav_att_config['use_RTE']
         self.RTE_ratio = cav_att_config['RTE_ratio']
         self.sttf = STTF(args['sttf'])
-        # adjust the channel numbers from 256+3 -> 256
-        self.prior_feed = nn.Linear(cav_att_config['dim'] + 3,
+        self.prior_channel_dim = args.get('prior_channel_dim', 3)
+        self.depth_gate_mode = args.get('depth_gate_mode', 'none')
+        self.depth_gate_scale = args.get('depth_gate_scale', 1.0)
+        # adjust the channel numbers from 256+prior -> 256
+        self.prior_feed = nn.Linear(cav_att_config['dim'] + self.prior_channel_dim,
                                     cav_att_config['dim'])
         self.layers = nn.ModuleList([])
         if self.use_RTE:
@@ -155,14 +158,26 @@ class V2XTEncoder(nn.Module):
                                     dropout=dropout))
             ]))
 
-    def forward(self, x, mask, spatial_correction_matrix):
+    def forward(self, x, mask, spatial_correction_matrix, depth_prior=None):
 
         # transform the features to the current timestamp
         # velocity, time_delay, infra
-        # (B,L,H,W,3)
-        prior_encoding = x[..., -3:]
+        # (B,L,H,W,prior_channel_dim)
+        prior_encoding = x[..., -self.prior_channel_dim:]
         # (B,L,H,W,C)
-        x = x[..., :-3]
+        x = x[..., :-self.prior_channel_dim]
+        if depth_prior is not None and self.depth_gate_mode not in (None, 'none', 'off'):
+            if depth_prior.dim() == 5:
+                depth_prior = depth_prior.squeeze(2)
+            depth_gate = depth_prior.unsqueeze(-1).clamp(min=0.0, max=1.0)
+            if self.depth_gate_mode == 'scale':
+                x = x * (1.0 + self.depth_gate_scale * depth_gate)
+            elif self.depth_gate_mode == 'mul':
+                x = x * depth_gate
+            elif self.depth_gate_mode == 'add':
+                x = x + self.depth_gate_scale * depth_gate
+            else:
+                raise ValueError(f"Unknown depth_gate_mode: {self.depth_gate_mode}")
         if self.use_RTE:
             # dt: (B,L)
             dt = prior_encoding[:, :, 0, 0, 1].to(torch.int)
@@ -187,7 +202,7 @@ class V2XTransformer(nn.Module):
         encoder_args = args['encoder']
         self.encoder = V2XTEncoder(encoder_args)
 
-    def forward(self, x, mask, spatial_correction_matrix):
-        output = self.encoder(x, mask, spatial_correction_matrix)
+    def forward(self, x, mask, spatial_correction_matrix, depth_prior=None):
+        output = self.encoder(x, mask, spatial_correction_matrix, depth_prior=depth_prior)
         output = output[:, 0]
         return output

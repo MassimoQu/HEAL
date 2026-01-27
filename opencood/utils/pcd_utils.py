@@ -9,7 +9,10 @@ Utility functions related to point cloud
 
 import open3d as o3d
 import numpy as np
-from pypcd import pypcd
+try:
+    from pypcd import pypcd
+except Exception:
+    pypcd = None
 
 def pcd_to_np(pcd_file):
     """
@@ -203,6 +206,8 @@ def downsample_lidar_minimum(pcd_np_list):
     return pcd_np_list
 
 def read_pcd(pcd_path):
+    if pypcd is None:
+        raise ImportError("pypcd is required to read .pcd files; install a Python3-compatible fork.")
     pcd = pypcd.PointCloud.from_path(pcd_path)
     time = None
     pcd_np_points = np.zeros((pcd.points, 4), dtype=np.float32)

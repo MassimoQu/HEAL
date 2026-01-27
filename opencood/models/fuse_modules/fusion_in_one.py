@@ -321,9 +321,10 @@ class V2XViTFusion(nn.Module):
     def __init__(self, args):
         super(V2XViTFusion, self).__init__()
         from opencood.models.sub_modules.v2xvit_basic import V2XTransformer
+        self.use_depth_prior = args.get('use_depth_prior', False)
         self.fusion_net = V2XTransformer(args['transformer'])
 
-    def forward(self, x, record_len, affine_matrix):
+    def forward(self, x, record_len, affine_matrix, depth_prior=None):
         """
         Fusion forwarding.
         
@@ -343,6 +344,9 @@ class V2XViTFusion(nn.Module):
         B, L = affine_matrix.shape[:2]
 
         regroup_feature, mask = Regroup(x, record_len, L)
+        depth_prior_grouped = None
+        if self.use_depth_prior and depth_prior is not None:
+            depth_prior_grouped, _ = Regroup(depth_prior, record_len, L)
         prior_encoding = \
             torch.zeros(len(record_len), L, 3, 1, 1).to(record_len.device)
         
@@ -354,18 +358,23 @@ class V2XViTFusion(nn.Module):
 
         regroup_feature = torch.cat([regroup_feature, prior_encoding], dim=2)
         regroup_feature_new = []
+        depth_prior_new = []
 
         for b in range(B):
             ego = 0
             regroup_feature_new.append(warp_affine_simple(regroup_feature[b], affine_matrix[b, ego], (H, W)))
+            if depth_prior_grouped is not None:
+                depth_prior_new.append(warp_affine_simple(depth_prior_grouped[b], affine_matrix[b, ego], (H, W)))
         regroup_feature = torch.stack(regroup_feature_new)
+        if depth_prior_grouped is not None:
+            depth_prior_grouped = torch.stack(depth_prior_new).squeeze(2)
 
         # b l c h w -> b l h w c
         regroup_feature = regroup_feature.permute(0, 1, 3, 4, 2)
         # transformer fusion. In perfect setting, there is no delay. 
         # it is possible to modify the xxx_basedataset.py and intermediatefusiondataset.py to retrieve these information
         spatial_correction_matrix = torch.eye(4).expand(len(record_len), L, 4, 4).to(record_len.device)
-        fused_feature = self.fusion_net(regroup_feature, mask, spatial_correction_matrix)
+        fused_feature = self.fusion_net(regroup_feature, mask, spatial_correction_matrix, depth_prior=depth_prior_grouped)
         # b h w c -> b c h w
         fused_feature = fused_feature.permute(0, 3, 1, 2)
         

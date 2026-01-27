@@ -109,12 +109,18 @@ def main():
     # build dataset for each noise setting
     print('Dataset Building')
     opencood_dataset = build_dataset(hypes, visualize=True, train=False)
+    max_test_samples = hypes.get('train_params', {}).get('max_test_samples', None)
+    if max_test_samples is not None:
+        max_test_samples = min(max_test_samples, len(opencood_dataset))
+        opencood_dataset = Subset(opencood_dataset, range(max_test_samples))
     # opencood_dataset_subset = Subset(opencood_dataset, range(640,2100))
     # data_loader = DataLoader(opencood_dataset_subset,
+    base_dataset = opencood_dataset.dataset if isinstance(opencood_dataset, Subset) else opencood_dataset
+    num_workers = int(os.environ.get("EVAL_NUM_WORKERS", 4))
     data_loader = DataLoader(opencood_dataset,
                             batch_size=1,
-                            num_workers=4,
-                            collate_fn=opencood_dataset.collate_batch_test,
+                            num_workers=num_workers,
+                            collate_fn=base_dataset.collate_batch_test,
                             shuffle=False,
                             pin_memory=False,
                             drop_last=False)
@@ -138,27 +144,27 @@ def main():
             if opt.fusion_method == 'late':
                 infer_result = inference_utils.inference_late_fusion(batch_data,
                                                         model,
-                                                        opencood_dataset)
+                                                        base_dataset)
             elif opt.fusion_method == 'early':
                 infer_result = inference_utils.inference_early_fusion(batch_data,
                                                         model,
-                                                        opencood_dataset)
+                                                        base_dataset)
             elif opt.fusion_method == 'intermediate':
                 infer_result = inference_utils.inference_intermediate_fusion(batch_data,
                                                                 model,
-                                                                opencood_dataset)
+                                                                base_dataset)
             elif opt.fusion_method == 'no':
                 infer_result = inference_utils.inference_no_fusion(batch_data,
                                                                 model,
-                                                                opencood_dataset)
+                                                                base_dataset)
             elif opt.fusion_method == 'no_w_uncertainty':
                 infer_result = inference_utils.inference_no_fusion_w_uncertainty(batch_data,
                                                                 model,
-                                                                opencood_dataset)
+                                                                base_dataset)
             elif opt.fusion_method == 'single':
                 infer_result = inference_utils.inference_no_fusion(batch_data,
                                                                 model,
-                                                                opencood_dataset,
+                                                                base_dataset,
                                                                 single_gt=True)
             else:
                 raise NotImplementedError('Only single, no, no_w_uncertainty, early, late and intermediate'
@@ -197,7 +203,7 @@ def main():
             if not opt.no_score:
                 infer_result.update({'score_tensor': pred_score})
 
-            if getattr(opencood_dataset, "heterogeneous", False):
+            if getattr(base_dataset, "heterogeneous", False):
                 cav_box_np, agent_modality_list = inference_utils.get_cav_box(batch_data)
                 infer_result.update({"cav_box_np": cav_box_np, \
                                      "agent_modality_list": agent_modality_list})

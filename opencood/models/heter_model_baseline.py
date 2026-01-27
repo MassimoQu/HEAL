@@ -8,6 +8,7 @@
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 from icecream import ic
 from collections import OrderedDict, Counter
@@ -161,14 +162,21 @@ class HeterModelBaseline(nn.Module):
 
         modality_count_dict = Counter(agent_modality_list)
         modality_feature_dict = {}
+        modality_depth_prior_dict = {}
 
         for modality_name in self.modality_name_list:
             if modality_name not in modality_count_dict:
                 continue
             feature = eval(f"self.encoder_{modality_name}")(data_dict, modality_name)
+            encoder = eval(f"self.encoder_{modality_name}")
+            depth_prior = getattr(encoder, "depth_prior", None)
             feature = eval(f"self.backbone_{modality_name}")({"spatial_features": feature})['spatial_features_2d']
             feature = eval(f"self.shrinker_{modality_name}")(feature)
             modality_feature_dict[modality_name] = feature
+            if depth_prior is not None:
+                if depth_prior.shape[-2:] != feature.shape[-2:]:
+                    depth_prior = F.interpolate(depth_prior, size=feature.shape[-2:], mode="bilinear", align_corners=False)
+                modality_depth_prior_dict[modality_name] = depth_prior
 
         """
         Crop/Padd camera feature map.
@@ -184,6 +192,8 @@ class HeterModelBaseline(nn.Module):
 
                     crop_func = torchvision.transforms.CenterCrop((target_H, target_W))
                     modality_feature_dict[modality_name] = crop_func(feature)
+                    if modality_name in modality_depth_prior_dict:
+                        modality_depth_prior_dict[modality_name] = crop_func(modality_depth_prior_dict[modality_name])
                     if eval(f"self.depth_supervision_{modality_name}"):
                         output_dict.update({
                             f"depth_items_{modality_name}": eval(f"self.encoder_{modality_name}").depth_items
@@ -194,12 +204,18 @@ class HeterModelBaseline(nn.Module):
         """
         counting_dict = {modality_name:0 for modality_name in self.modality_name_list}
         heter_feature_2d_list = []
+        depth_prior_list = []
         for modality_name in agent_modality_list:
             feat_idx = counting_dict[modality_name]
             heter_feature_2d_list.append(modality_feature_dict[modality_name][feat_idx])
+            if modality_name in modality_depth_prior_dict:
+                depth_prior_list.append(modality_depth_prior_dict[modality_name][feat_idx])
             counting_dict[modality_name] += 1
 
         heter_feature_2d = torch.stack(heter_feature_2d_list)
+        depth_prior = None
+        if depth_prior_list and len(depth_prior_list) == len(heter_feature_2d_list):
+            depth_prior = torch.stack(depth_prior_list)
         
         if self.compress:
             heter_feature_2d = self.compressor(heter_feature_2d)
@@ -220,7 +236,10 @@ class HeterModelBaseline(nn.Module):
 
         we omit self.backbone's first layer.
         """
-        fused_feature = self.fusion_net(heter_feature_2d, record_len, affine_matrix)
+        if depth_prior is not None and getattr(self.fusion_net, "use_depth_prior", False):
+            fused_feature = self.fusion_net(heter_feature_2d, record_len, affine_matrix, depth_prior=depth_prior)
+        else:
+            fused_feature = self.fusion_net(heter_feature_2d, record_len, affine_matrix)
 
         if self.shrink_flag:
             fused_feature = self.shrink_conv(fused_feature)

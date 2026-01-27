@@ -39,10 +39,24 @@ def main():
                                               visualize=False,
                                               train=False)
 
+    max_samples = hypes.get('train_params', {}).get('max_samples', None)
+    max_val_samples = hypes.get('train_params', {}).get('max_val_samples', max_samples)
+    if max_samples is not None:
+        max_samples = min(max_samples, len(opencood_train_dataset))
+        opencood_train_dataset = Subset(opencood_train_dataset, range(max_samples))
+    if max_val_samples is not None:
+        max_val_samples = min(max_val_samples, len(opencood_validate_dataset))
+        opencood_validate_dataset = Subset(opencood_validate_dataset, range(max_val_samples))
+
+    train_collate = opencood_train_dataset.dataset.collate_batch_train \
+        if isinstance(opencood_train_dataset, Subset) else opencood_train_dataset.collate_batch_train
+    val_collate = opencood_validate_dataset.dataset.collate_batch_train \
+        if isinstance(opencood_validate_dataset, Subset) else opencood_validate_dataset.collate_batch_train
+
     train_loader = DataLoader(opencood_train_dataset,
                               batch_size=hypes['train_params']['batch_size'],
                               num_workers=4,
-                              collate_fn=opencood_train_dataset.collate_batch_train,
+                              collate_fn=train_collate,
                               shuffle=True,
                               pin_memory=True,
                               drop_last=True,
@@ -50,7 +64,7 @@ def main():
     val_loader = DataLoader(opencood_validate_dataset,
                             batch_size=hypes['train_params']['batch_size'],
                             num_workers=4,
-                            collate_fn=opencood_train_dataset.collate_batch_train,
+                            collate_fn=val_collate,
                             shuffle=True,
                             pin_memory=True,
                             drop_last=True,
@@ -174,7 +188,10 @@ def main():
 
         scheduler.step(epoch)
 
-        opencood_train_dataset.reinitialize()
+        if isinstance(opencood_train_dataset, Subset):
+            opencood_train_dataset.dataset.reinitialize()
+        else:
+            opencood_train_dataset.reinitialize()
 
     print('Training Finished, checkpoints saved to %s' % saved_path)
 

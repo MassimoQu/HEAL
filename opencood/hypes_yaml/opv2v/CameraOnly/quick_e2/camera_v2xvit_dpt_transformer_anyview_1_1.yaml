@@ -1,0 +1,267 @@
+name: HeterBaseline_opv2v_camera_v2xvit_dpt_transformer_anyview_1_1_e2
+root_dir: dataset/OPV2V/train
+validate_dir: dataset/OPV2V/validate
+test_dir: dataset/OPV2V/test
+yaml_parser: load_general_params
+train_params:
+  batch_size: 1
+  epoches: 2
+  eval_freq: 1
+  save_freq: 1
+  max_cav: 5
+  max_samples: 500
+  max_val_samples: 200
+  max_test_samples: 200
+comm_range: 70
+input_source:
+- camera
+label_type: camera
+cav_lidar_range: &id001
+- -51.2
+- -51.2
+- -3
+- 51.2
+- 51.2
+- 1
+add_data_extension: []
+heter:
+  assignment_path: opencood/logs/heter_modality_assign/opv2v_4modality.json
+  ego_modality: m2
+  mapping_dict:
+    m1: m2
+    m2: m2
+    m3: m2
+    m4: m2
+  modality_setting:
+    m2:
+      sensor_type: camera
+      core_method: dpt_transformer_lift_splat_shoot
+      grid_conf: &id003
+        xbound:
+        - -51.2
+        - 51.2
+        - 0.4
+        ybound:
+        - -51.2
+        - 51.2
+        - 0.4
+        zbound:
+        - -10
+        - 10
+        - 20.0
+        ddiscr:
+        - 2
+        - 50
+        - 48
+        mode: LID
+      data_aug_conf: &id004
+        resize_lim:
+        - 0.65
+        - 0.7
+        final_dim:
+        - 384
+        - 512
+        rot_lim:
+        - -3.6
+        - 3.6
+        H: 600
+        W: 800
+        rand_flip: false
+        bot_pct_lim:
+        - 0.0
+        - 0.05
+        cams:
+        - camera0
+        - camera1
+        - camera2
+        - camera3
+        Ncams: 4
+fusion:
+  core_method: intermediateheter
+  dataset: opv2v
+  args:
+    proj_first: false
+    grid_conf: None
+    data_aug_conf: None
+preprocess:
+  core_method: VoxelPreprocessor
+  args:
+    vw: 0.4
+    vh: 0.4
+    vd: 4
+    T: 1
+    voxel_size:
+    - 0.4
+    - 0.4
+    - 4
+  cav_lidar_range: *id001
+postprocess:
+  core_method: VoxelPostprocessor
+  gt_range: *id001
+  anchor_args:
+    cav_lidar_range: *id001
+    l: 3.9
+    w: 1.6
+    h: 1.56
+    r: &id002
+    - 0
+    - 90
+    feature_stride: 4
+    num: 2
+  target_args:
+    pos_threshold: 0.6
+    neg_threshold: 0.45
+    score_threshold: 0.2
+  order: hwl
+  max_num: 150
+  nms_thresh: 0.15
+  dir_args: &id005
+    dir_offset: 0.7853
+    num_bins: 2
+    anchor_yaw: *id002
+model:
+  core_method: heter_model_baseline
+  args:
+    ego_modality: m2
+    lidar_range: *id001
+    m2:
+      core_method: dpt_transformer_lift_splat_shoot
+      sensor_type: camera
+      encoder_args:
+        anchor_number: 2
+        grid_conf: *id003
+        data_aug_conf: *id004
+        img_downsample: 8
+        img_features: 128
+        use_depth_gt: false
+        depth_supervision: false
+        camera_encoder: EfficientNet
+        dpt_root: /home/qqxluca/vggt_series_4_coop/Depth-Anything-3/src
+        dpt_model_name: da3-large
+        dpt_pretrained: depth-anything/DA3-LARGE-1.1
+        dpt_freeze: true
+        dpt_use_amp: true
+        dpt_amp_dtype: bf16
+        dpt_patch_size: 14
+        dpt_resize: null
+        dpt_feat_layers:
+        - 11
+        - 17
+        - 23
+        dpt_feat_fuse: weighted_sum
+        dpt_feat_dim: null
+        depth_min: 0.1
+        depth_max: 80.0
+      camera_mask_args:
+        cav_lidar_range: *id001
+        grid_conf: *id003
+      backbone_args:
+        layer_nums:
+        - 3
+        - 5
+        - 8
+        layer_strides:
+        - 2
+        - 2
+        - 2
+        num_filters:
+        - 64
+        - 128
+        - 256
+        upsample_strides:
+        - 1
+        - 2
+        - 4
+        num_upsample_filter:
+        - 128
+        - 128
+        - 128
+        inplanes: 128
+      shrink_header:
+        kernal_size:
+        - 3
+        stride:
+        - 2
+        padding:
+        - 1
+        dim:
+        - 256
+        input_dim: 384
+    fusion_method: v2xvit
+    v2xvit:
+      transformer:
+        encoder:
+          num_blocks: 1
+          depth: 3
+          use_roi_mask: true
+          use_RTE: false
+          RTE_ratio: 0
+          cav_att_config:
+            dim: 256
+            use_hetero: true
+            use_RTE: false
+            RTE_ratio: 0
+            heads: 8
+            dim_head: 32
+            dropout: 0.3
+          pwindow_att_config:
+            dim: 256
+            heads:
+            - 16
+            - 8
+            - 4
+            dim_head:
+            - 16
+            - 32
+            - 64
+            dropout: 0.3
+            window_size:
+            - 4
+            - 8
+            - 16
+            relative_pos_embedding: true
+            fusion_method: split_attn
+          feed_forward:
+            mlp_dim: 256
+            dropout: 0.3
+          sttf:
+            voxel_size:
+            - 0.4
+            - 0.4
+            - 4
+            downsample_rate: 4
+    in_head: 256
+    anchor_number: 2
+    dir_args: *id005
+loss:
+  core_method: point_pillar_depth_loss
+  args:
+    pos_cls_weight: 2.0
+    cls:
+      type: SigmoidFocalLoss
+      alpha: 0.25
+      gamma: 2.0
+      weight: 1.0
+    reg:
+      type: WeightedSmoothL1Loss
+      sigma: 3.0
+      codewise: true
+      weight: 2.0
+    dir:
+      type: WeightedSoftmaxClassificationLoss
+      weight: 0.2
+      args: *id005
+    depth:
+      weight: 0.0
+optimizer:
+  core_method: Adam
+  lr: 0.001
+  args:
+    eps: 1e-10
+    weight_decay: 1e-4
+lr_scheduler:
+  core_method: multistep
+  gamma: 0.1
+  step_size:
+  - 10
+  - 25
