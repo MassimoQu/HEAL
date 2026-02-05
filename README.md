@@ -1,4 +1,7 @@
 # HEAL (HEterogeneous ALliance)
+> Project: coopVGGT | Role: Core coop perception backbone | Status: active
+> Primary docs: vggt_series_4_coop/docs/project_overview.md
+
 [ICLR2024] HEAL: An Extensible Framework for Open Heterogeneous Collaborative Perception
 
 This repo is also a **unified** and **integrated** multi-agent collaborative perception framework for **LiDAR-based**, **camera-based** and **heterogeneous** setting! 
